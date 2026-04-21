@@ -5,6 +5,9 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Thumbinator — LMS Course Thumbnail Resizer</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E🤖%3C/text%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo+Black&display=swap" rel="stylesheet">
 <style>
   :root {
     --bg: #0a0205;
@@ -186,17 +189,32 @@
   }
   header h1 {
     margin: 0;
-    font-family: Impact, "Arial Black", "Helvetica Neue", sans-serif;
-    font-size: 28px;
-    letter-spacing: 0.08em;
+    font-family: "Archivo Black", "Arial Black", "Helvetica Neue", Helvetica, sans-serif;
+    font-weight: 900;
+    font-size: 30px;
+    letter-spacing: 0.015em;
     text-transform: uppercase;
     color: #fff;
-    text-shadow: 0 0 14px rgba(239,68,68,0.75), 0 2px 0 rgba(0,0,0,0.6);
+    -webkit-text-stroke: 0.75px rgba(0,0,0,0.85);
+    text-shadow:
+      0 2px 0 rgba(0,0,0,0.85),
+      0 0 22px rgba(239,68,68,0.55),
+      0 0 60px rgba(239,68,68,0.28);
     animation: titlePulse 4.5s ease-in-out infinite;
   }
   @keyframes titlePulse {
-    0%, 100% { text-shadow: 0 0 14px rgba(239,68,68,0.7), 0 2px 0 rgba(0,0,0,0.6); }
-    50% { text-shadow: 0 0 22px rgba(239,68,68,1), 0 0 40px rgba(239,68,68,0.5), 0 2px 0 rgba(0,0,0,0.6); }
+    0%, 100% {
+      text-shadow:
+        0 2px 0 rgba(0,0,0,0.85),
+        0 0 22px rgba(239,68,68,0.55),
+        0 0 60px rgba(239,68,68,0.28);
+    }
+    50% {
+      text-shadow:
+        0 2px 0 rgba(0,0,0,0.85),
+        0 0 30px rgba(239,68,68,0.75),
+        0 0 90px rgba(239,68,68,0.4);
+    }
   }
   header .sub { color: #fca5a5; font-size: 13px; letter-spacing: 0.02em; }
   main {
@@ -298,7 +316,10 @@
     box-shadow:
       0 0 0 1px rgba(0,0,0,0.7),
       0 8px 22px rgba(0,0,0,0.55);
+    touch-action: none;
   }
+  canvas.draggable { cursor: grab; }
+  canvas.draggable.dragging { cursor: grabbing; }
   /* T-800 scan line sweeping across the thumbnail on first load */
   .canvas-wrap.scanning::after {
     content: "";
@@ -413,12 +434,17 @@
   }
   .login-box h2 {
     margin: 0 0 6px 0;
-    font-family: Impact, "Arial Black", "Helvetica Neue", sans-serif;
-    font-size: 28px;
-    letter-spacing: 0.08em;
+    font-family: "Archivo Black", "Arial Black", "Helvetica Neue", Helvetica, sans-serif;
+    font-weight: 900;
+    font-size: 30px;
+    letter-spacing: 0.015em;
     text-transform: uppercase;
     color: #fff;
-    text-shadow: 0 0 14px rgba(239,68,68,0.75), 0 2px 0 rgba(0,0,0,0.6);
+    -webkit-text-stroke: 0.75px rgba(0,0,0,0.85);
+    text-shadow:
+      0 2px 0 rgba(0,0,0,0.85),
+      0 0 22px rgba(239,68,68,0.55),
+      0 0 60px rgba(239,68,68,0.28);
     animation: titlePulse 4.5s ease-in-out infinite;
   }
   .login-box .login-subtitle {
@@ -480,11 +506,13 @@
     letter-spacing: 0.04em;
   }
   .login-tagline {
-    margin-top: 18px;
-    font-size: 11px;
-    color: var(--ink-dim);
-    letter-spacing: 0.04em;
+    margin-top: 22px;
+    font-size: 15px;
+    color: #fca5a5;
+    letter-spacing: 0.02em;
     font-style: italic;
+    font-weight: 500;
+    text-shadow: 0 0 12px rgba(239, 68, 68, 0.35);
   }
   body.locked { overflow: hidden; }
 
@@ -760,6 +788,7 @@
       previewArea.classList.remove('hidden');
       document.body.classList.remove('app-initial');
       ['download','copyClip','newImage'].forEach(id => $(id).disabled = false);
+      canvas.classList.toggle('draggable', state.mode !== 'stretch');
       render();
       // Scan sweep animation across the thumbnail
       const wrap = $('canvasWrap');
@@ -794,6 +823,7 @@
       btn.classList.add('active');
       state.mode = btn.dataset.mode;
       $('anchorSection').classList.toggle('hidden', !['cover','fit-width','fit-height'].includes(state.mode));
+      canvas.classList.toggle('draggable', !!state.img && state.mode !== 'stretch');
       render();
     });
   });
@@ -803,6 +833,11 @@
       document.querySelectorAll('#anchorGrid button').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
       state.anchor = btn.dataset.anchor;
+      // Anchor click is authoritative — clear any drag offset so the anchor alone positions the image
+      state.offX = 0;
+      state.offY = 0;
+      $('offsetX').value = 0;
+      $('offsetY').value = 0;
       render();
     });
   });
@@ -897,6 +932,10 @@
     drawW *= state.zoom;
     drawH *= state.zoom;
 
+    // Cache current draw dims for the drag handler
+    state._drawW = drawW;
+    state._drawH = drawH;
+
     // Anchor position
     const [ax, ay] = anchorToXY(state.anchor);
     let x = (W - drawW) * ax;
@@ -920,6 +959,53 @@
     }
     ctx.restore();
   }
+
+  // ---------- Click-and-drag to reposition ----------
+  const drag = { active: false, startX: 0, startY: 0, startOffX: 0, startOffY: 0, scaleX: 1, scaleY: 1 };
+
+  canvas.addEventListener('pointerdown', (e) => {
+    if (!state.img || state.mode === 'stretch') return;
+    const rect = canvas.getBoundingClientRect();
+    drag.scaleX = canvas.width / rect.width;
+    drag.scaleY = canvas.height / rect.height;
+    drag.active = true;
+    drag.startX = e.clientX;
+    drag.startY = e.clientY;
+    drag.startOffX = state.offX;
+    drag.startOffY = state.offY;
+    canvas.classList.add('dragging');
+    canvas.setPointerCapture(e.pointerId);
+    e.preventDefault();
+  });
+
+  canvas.addEventListener('pointermove', (e) => {
+    if (!drag.active) return;
+    const dxCanvas = (e.clientX - drag.startX) * drag.scaleX;
+    const dyCanvas = (e.clientY - drag.startY) * drag.scaleY;
+    const overX = Math.abs(canvas.width - state._drawW) * 0.5;
+    const overY = Math.abs(canvas.height - state._drawH) * 0.5;
+
+    if (overX > 0.5) {
+      state.offX = Math.max(-1, Math.min(1, drag.startOffX + dxCanvas / overX));
+      const pct = Math.round(state.offX * 100);
+      $('offsetX').value = pct;
+    }
+    if (overY > 0.5) {
+      state.offY = Math.max(-1, Math.min(1, drag.startOffY + dyCanvas / overY));
+      const pct = Math.round(state.offY * 100);
+      $('offsetY').value = pct;
+    }
+    render();
+  });
+
+  function endDrag(e) {
+    if (!drag.active) return;
+    drag.active = false;
+    canvas.classList.remove('dragging');
+    try { canvas.releasePointerCapture(e.pointerId); } catch {}
+  }
+  canvas.addEventListener('pointerup', endDrag);
+  canvas.addEventListener('pointercancel', endDrag);
 
   // ---------- Export ----------
   $('download').addEventListener('click', () => {
@@ -991,6 +1077,7 @@
     // Resize canvas + reset view
     resizeCanvas();
     ctx.clearRect(0, 0, canvas.width, canvas.height);
+    canvas.classList.remove('draggable', 'dragging');
     dropzone.classList.remove('hidden');
     previewArea.classList.add('hidden');
     document.body.classList.add('app-initial');
