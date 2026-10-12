@@ -353,6 +353,31 @@
     to { transform: translateX(0); opacity: 1; }
   }
   .meta { color: var(--ink-dim); font-size: 13px; }
+  .batch-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    width: 100%;
+    max-height: 420px;
+    overflow-y: auto;
+    border: 1px solid rgba(239, 68, 68, 0.45);
+    border-radius: 8px;
+    background: rgba(0,0,0,0.35);
+    box-shadow: inset 0 0 20px rgba(0,0,0,0.25);
+  }
+  .batch-list li {
+    display: flex;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 7px 12px;
+    font-size: 13px;
+    border-bottom: 1px solid rgba(239, 68, 68, 0.15);
+  }
+  .batch-list li:last-child { border-bottom: none; }
+  .batch-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .batch-status { color: var(--ink-dim); flex-shrink: 0; }
+  .batch-status.done { color: var(--good); }
+  .batch-status.failed { color: var(--accent); }
   .row { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; }
   label.block { display: block; font-size: 12px; color: var(--ink-dim); margin: 12px 0 6px; text-transform: uppercase; letter-spacing: 0.06em; }
   .segmented { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
@@ -576,7 +601,7 @@
     <label class="block">Template</label>
     <div class="segmented" id="templateSeg">
       <button data-w="534" data-h="300" class="active" title="Old LMS — SumTotal">SumTotal 534×300</button>
-      <button data-w="800" data-h="400" title="New LMS — SeerTech">SeerTech 800×400</button>
+      <button data-w="800" data-h="400" title="New LMS — Seertech">Seertech 800×400</button>
     </div>
 
     <label class="block">Mode</label>
@@ -654,10 +679,10 @@
       <button class="btn" id="download" disabled>
         <svg width="14" height="16" viewBox="0 0 24 28" fill="currentColor" style="vertical-align:-3px; margin-right:8px;" aria-hidden="true">
           <path d="M9 1 L15 1 L15 13 L21 13 L12 25 L3 13 L9 13 Z"/>
-        </svg>Download Thumbnail
+        </svg><span id="downloadLabel">Download Thumbnail</span>
       </button>
       <button class="btn ghost" id="copyClip" disabled>Copy to clipboard</button>
-      <button class="btn ghost" id="newImage" disabled>New image</button>
+      <button class="btn ghost" id="newImage" disabled><span id="newImageLabel">New image</span></button>
     </div>
   </aside>
 
@@ -677,8 +702,8 @@
           <circle cx="40" cy="40" r="2" fill="#ef4444"/>
         </svg>
         <div><strong>DROP TARGET ACQUIRED</strong></div>
-        <div class="hint" style="margin-top:6px;">Drop an image, click to browse, or paste from clipboard.<br>JPG, PNG, WebP, GIF, SVG — anything the browser can read.</div>
-        <input type="file" id="file" accept="image/*" class="hidden">
+        <div class="hint" style="margin-top:6px;">Drop one image, or a batch of many, click to browse, or paste from clipboard.<br>JPG, PNG, WebP, GIF, SVG — anything the browser can read.</div>
+        <input type="file" id="file" accept="image/*" multiple class="hidden">
       </div>
     </div>
 
@@ -702,11 +727,17 @@
         Source: <span id="srcInfo">—</span> &nbsp;·&nbsp; Output: <span id="outInfo">534 × 300</span>
       </div>
     </div>
+
+    <div id="batchArea" class="hidden stack" style="align-items:flex-start; align-self:flex-start; width:420px; max-width:100%;">
+      <div class="meta" id="batchSummary">0 images queued</div>
+      <ul class="batch-list" id="batchList"></ul>
+    </div>
   </section>
 </main>
 
 <footer class="footer">THUMBINATOR | Crafted by Michael Szapkiw 🙂 | Need support or have a suggestion? <a href="mailto:michael.szapkiw@vituity.com?subject=THUMBINATOR%20Inquiry">Email Michael Here.</a></footer>
 
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js" integrity="sha384-+mbV2IY1Zk/X1p/nWllGySJSUN8uMs+gUAN10Or95UBH0fpj6GfKgPmgC5EXieXG" crossorigin="anonymous"></script>
 <script>
 // --- Authentication gate ---
 (function () {
@@ -764,6 +795,18 @@
   const dropzone = $('dropzone');
   const fileInput = $('file');
   const previewArea = $('previewArea');
+  const batchArea = $('batchArea');
+  const MAX_BULK = 200;
+  let batchFiles = null;
+  let batchRunning = false;
+
+  function sanitizeBaseName(name) {
+    return (name.replace(/\.[^.]+$/, '') || 'thumbnail').replace(/[<>:"/\\|?*]+/g, '').trim() || 'thumbnail';
+  }
+
+  function escapeHtml(s) {
+    return s.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  }
 
   const state = {
     img: null,
@@ -784,7 +827,12 @@
   // ---------- File load ----------
   function loadFile(file) {
     if (!file || !file.type.startsWith('image/')) return;
-    state.srcName = file.name.replace(/\.[^.]+$/, '') || 'thumbnail';
+    batchFiles = null;
+    batchArea.classList.add('hidden');
+    $('downloadLabel').textContent = 'Download Thumbnail';
+    $('newImageLabel').textContent = 'New image';
+    $('copyClip').disabled = false;
+    state.srcName = sanitizeBaseName(file.name);
     const url = URL.createObjectURL(file);
     const img = new Image();
     img.onload = () => {
@@ -808,13 +856,37 @@
     img.src = url;
   }
 
+  // ---------- Bulk load ----------
+  function loadBatch(files) {
+    let imgFiles = files.filter(f => f.type.startsWith('image/'));
+    if (!imgFiles.length) return;
+    if (imgFiles.length === 1) { loadFile(imgFiles[0]); return; }
+    if (imgFiles.length > MAX_BULK) {
+      alert(`Max ${MAX_BULK} images at once — only the first ${MAX_BULK} will be processed.`);
+      imgFiles = imgFiles.slice(0, MAX_BULK);
+    }
+    batchFiles = imgFiles;
+    state.img = null;
+    dropzone.classList.add('hidden');
+    previewArea.classList.add('hidden');
+    batchArea.classList.remove('hidden');
+    document.body.classList.remove('app-initial');
+    $('batchList').innerHTML = imgFiles.map((f, i) =>
+      `<li><span class="batch-name">${escapeHtml(f.name)}</span><span class="batch-status" id="batchStatus-${i}">Queued</span></li>`
+    ).join('');
+    $('batchSummary').textContent = `${imgFiles.length} images queued — output ${state.targetW} × ${state.targetH}`;
+    $('downloadLabel').textContent = `Download All as ZIP (${imgFiles.length})`;
+    $('newImageLabel').textContent = 'New batch';
+    $('copyClip').disabled = true;
+    ['download','newImage'].forEach(id => $(id).disabled = false);
+  }
+
   dropzone.addEventListener('click', () => fileInput.click());
-  fileInput.addEventListener('change', e => loadFile(e.target.files[0]));
+  fileInput.addEventListener('change', e => loadBatch([...e.target.files]));
   ['dragenter','dragover'].forEach(ev => dropzone.addEventListener(ev, e => { e.preventDefault(); dropzone.classList.add('hover'); }));
   ['dragleave','drop'].forEach(ev => dropzone.addEventListener(ev, e => { e.preventDefault(); dropzone.classList.remove('hover'); }));
   dropzone.addEventListener('drop', e => {
-    const f = e.dataTransfer.files[0];
-    if (f) loadFile(f);
+    loadBatch([...e.dataTransfer.files]);
   });
   // Paste support
   window.addEventListener('paste', e => {
@@ -910,6 +982,9 @@
       eyeBox.style.height = state.targetH + 'px';
     }
     $('outInfo').textContent = `${state.targetW} × ${state.targetH}`;
+    if (batchFiles && !batchRunning) {
+      $('batchSummary').textContent = `${batchFiles.length} images queued — output ${state.targetW} × ${state.targetH}`;
+    }
   }
 
   // ---------- Rendering ----------
@@ -918,22 +993,11 @@
     return map[anchor] || map.mc;
   }
 
-  function render() {
-    if (!state.img) return;
-    const img = state.img;
-    const W = canvas.width, H = canvas.height;
+  function computeLayout(img, W, H) {
     const sW = img.naturalWidth, sH = img.naturalHeight;
-
-    ctx.save();
-    ctx.clearRect(0, 0, W, H);
-
-    // Always fill with canvas background first (covered by image in cover/stretch modes)
-    ctx.fillStyle = state.bg;
-    ctx.fillRect(0, 0, W, H);
-
-    let drawW, drawH;
     const targetRatio = W / H;
     const imgRatio = sW / sH;
+    let drawW, drawH;
 
     if (state.mode === 'stretch') {
       drawW = W; drawH = H;
@@ -951,10 +1015,6 @@
     drawW *= state.zoom;
     drawH *= state.zoom;
 
-    // Cache current draw dims for the drag handler
-    state._drawW = drawW;
-    state._drawH = drawH;
-
     // Anchor position
     const [ax, ay] = anchorToXY(state.anchor);
     let x = (W - drawW) * ax;
@@ -966,17 +1026,40 @@
 
     if (state.mode === 'stretch') { x = 0; y = 0; }
 
-    ctx.imageSmoothingEnabled = true;
-    ctx.imageSmoothingQuality = 'high';
-    ctx.drawImage(img, x, y, drawW, drawH);
+    return { drawW, drawH, x, y };
+  }
+
+  function drawToCanvas(img, targetCanvas, targetCtx) {
+    const W = targetCanvas.width, H = targetCanvas.height;
+    const { drawW, drawH, x, y } = computeLayout(img, W, H);
+
+    targetCtx.save();
+    targetCtx.clearRect(0, 0, W, H);
+
+    // Always fill with canvas background first (covered by image in cover/stretch modes)
+    targetCtx.fillStyle = state.bg;
+    targetCtx.fillRect(0, 0, W, H);
+
+    targetCtx.imageSmoothingEnabled = true;
+    targetCtx.imageSmoothingQuality = 'high';
+    targetCtx.drawImage(img, x, y, drawW, drawH);
 
     // Stroke / border — draw inside the canvas bounds
     if (state.strokeEnabled && state.strokeWidth > 0) {
-      ctx.strokeStyle = state.strokeColor;
-      ctx.lineWidth = state.strokeWidth * 2; // outer half gets clipped => crisp inner border
-      ctx.strokeRect(0, 0, W, H);
+      targetCtx.strokeStyle = state.strokeColor;
+      targetCtx.lineWidth = state.strokeWidth * 2; // outer half gets clipped => crisp inner border
+      targetCtx.strokeRect(0, 0, W, H);
     }
-    ctx.restore();
+    targetCtx.restore();
+  }
+
+  function render() {
+    if (!state.img) return;
+    const layout = computeLayout(state.img, canvas.width, canvas.height);
+    // Cache current draw dims for the drag handler
+    state._drawW = layout.drawW;
+    state._drawH = layout.drawH;
+    drawToCanvas(state.img, canvas, ctx);
   }
 
   // ---------- Click-and-drag to reposition ----------
@@ -1027,12 +1110,81 @@
   canvas.addEventListener('pointercancel', endDrag);
 
   // ---------- Export ----------
-  $('download').addEventListener('click', () => {
+  function loadImageAsync(file) {
+    return new Promise((resolve, reject) => {
+      const url = URL.createObjectURL(file);
+      const img = new Image();
+      img.onload = () => { resolve(img); URL.revokeObjectURL(url); };
+      img.onerror = () => { reject(new Error('load failed')); URL.revokeObjectURL(url); };
+      img.src = url;
+    });
+  }
+
+  function setBatchStatus(i, text, cls) {
+    const el = $('batchStatus-' + i);
+    if (!el) return;
+    el.textContent = text;
+    el.className = 'batch-status' + (cls ? ' ' + cls : '');
+  }
+
+  async function runBatchExport() {
+    if (batchRunning || !batchFiles) return;
+    batchRunning = true;
+    $('download').disabled = true;
+    $('newImage').disabled = true;
+
     const fmt = $('format').value;
     const q = +$('quality').value;
     const ext = fmt === 'image/jpeg' ? 'jpg' : fmt === 'image/webp' ? 'webp' : 'png';
-    const base = (state.srcName || 'thumbnail').replace(/[<>:"/\\|?*]+/g,'').trim() || 'thumbnail';
-    const name = `[THUMBINATOR] ${base}`;
+    const W = state.targetW, H = state.targetH;
+    const off = document.createElement('canvas');
+    off.width = W; off.height = H;
+    const octx = off.getContext('2d');
+    const zip = new JSZip();
+    const used = new Set();
+
+    for (let i = 0; i < batchFiles.length; i++) {
+      const file = batchFiles[i];
+      $('batchSummary').textContent = `Converting ${i + 1} / ${batchFiles.length} — ${file.name}`;
+      setBatchStatus(i, 'Converting…');
+      try {
+        const img = await loadImageAsync(file);
+        drawToCanvas(img, off, octx);
+        const blob = await new Promise(res => off.toBlob(res, fmt, q));
+        const base = sanitizeBaseName(file.name);
+        let name = `${base}_${W}x${H}px.${ext}`;
+        let n = 2;
+        while (used.has(name)) { name = `${base}_${W}x${H}px (${n}).${ext}`; n++; }
+        used.add(name);
+        zip.file(name, blob);
+        setBatchStatus(i, 'Done ✓', 'done');
+      } catch (e) {
+        setBatchStatus(i, 'Failed', 'failed');
+      }
+      await new Promise(r => setTimeout(r, 0)); // yield so the UI stays responsive
+    }
+
+    $('batchSummary').textContent = 'Zipping…';
+    const zipBlob = await zip.generateAsync({ type: 'blob' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(zipBlob);
+    a.download = `thumbinator-batch_${W}x${H}px.zip`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+
+    $('batchSummary').textContent = `Done — ${batchFiles.length} images zipped ✓`;
+    batchRunning = false;
+    $('download').disabled = false;
+    $('newImage').disabled = false;
+  }
+
+  $('download').addEventListener('click', () => {
+    if (batchFiles) { runBatchExport(); return; }
+    const fmt = $('format').value;
+    const q = +$('quality').value;
+    const ext = fmt === 'image/jpeg' ? 'jpg' : fmt === 'image/webp' ? 'webp' : 'png';
+    const base = sanitizeBaseName(state.srcName || 'thumbnail');
+    const name = `${base}_${canvas.width}x${canvas.height}px`;
     canvas.toBlob(blob => {
       const a = document.createElement('a');
       a.href = URL.createObjectURL(blob);
@@ -1055,6 +1207,13 @@
 
   $('newImage').addEventListener('click', () => {
     // Reset all state to defaults
+    batchFiles = null;
+    batchRunning = false;
+    $('batchList').innerHTML = '';
+    $('batchSummary').textContent = '0 images queued';
+    batchArea.classList.add('hidden');
+    $('downloadLabel').textContent = 'Download Thumbnail';
+    $('newImageLabel').textContent = 'New image';
     state.img = null;
     state.mode = 'cover';
     state.anchor = 'mc';
