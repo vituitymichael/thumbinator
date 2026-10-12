@@ -560,7 +560,7 @@
 
 <header>
   <h1>🤖 Thumbinator</h1>
-  <span class="sub">I'll be back... with your 534px × 300px thumbnail.</span>
+  <span class="sub">I'll be back... with your thumbnail.</span>
 </header>
 
 <main>
@@ -571,6 +571,12 @@
       <input type="number" id="targetW" value="534" min="1" style="width:80px">
       <label class="block" style="margin:0;">Height</label>
       <input type="number" id="targetH" value="300" min="1" style="width:80px">
+    </div>
+
+    <label class="block">Template</label>
+    <div class="segmented" id="templateSeg">
+      <button data-w="534" data-h="300" class="active" title="Old LMS — SumTotal">SumTotal 534×300</button>
+      <button data-w="800" data-h="400" title="New LMS — SeerTech">SeerTech 800×400</button>
     </div>
 
     <label class="block">Mode</label>
@@ -880,6 +886,19 @@
   $('targetW').addEventListener('change', e => { state.targetW = Math.max(1, +e.target.value || 534); resizeCanvas(); render(); });
   $('targetH').addEventListener('change', e => { state.targetH = Math.max(1, +e.target.value || 300); resizeCanvas(); render(); });
 
+  document.querySelectorAll('#templateSeg button').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('#templateSeg button').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      state.targetW = +btn.dataset.w;
+      state.targetH = +btn.dataset.h;
+      $('targetW').value = state.targetW;
+      $('targetH').value = state.targetH;
+      resizeCanvas();
+      render();
+    });
+  });
+
   $('quality').addEventListener('input', e => $('qualityLabel').textContent = Math.round(+e.target.value * 100) + '%');
 
   function resizeCanvas() {
@@ -1054,6 +1073,7 @@
     fileInput.value = '';
     $('targetW').value = 534;
     $('targetH').value = 300;
+    document.querySelectorAll('#templateSeg button').forEach(b => b.classList.toggle('active', b.dataset.w === '534'));
     document.querySelectorAll('#modeSeg button').forEach(b => b.classList.toggle('active', b.dataset.mode === 'cover'));
     document.querySelectorAll('#anchorGrid button').forEach(b => b.classList.toggle('active', b.dataset.anchor === 'mc'));
     $('anchorSection').classList.remove('hidden');
